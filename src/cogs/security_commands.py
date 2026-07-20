@@ -118,7 +118,11 @@ class SecurityCommands(commands.Cog):
     async def security(self, interaction: discord.Interaction):
         """Open security configuration"""
         await interaction.response.defer(ephemeral=True)
-        embed = RinoxEmbed.info("Security configuration panel", "🔒 Security")
+        embed = RinoxEmbed.info(
+            "Use `/setup` to configure all security modules via the dashboard.\n"
+            "Use `/automate toggle-module` to quickly enable/disable individual modules.",
+            "🔒 Security"
+        )
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     async def _scan_server(self, interaction: discord.Interaction,

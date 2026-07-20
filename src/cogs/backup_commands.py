@@ -72,9 +72,11 @@ class BackupCommands(commands.Cog):
         )
         await msg.edit(embed=embed)
         
-    @app_commands.command(name="restore", description="📥 Restore from Backup")
+    @app_commands.command(name="restore", description="📥 Restore Guild Settings from Backup")
+    @app_commands.describe(backup_id="Backup ID (use /backup list to find)")
     @app_commands.checks.has_permissions(administrator=True)
-    async def restore(self, interaction: discord.Interaction):
+    async def restore(self, interaction: discord.Interaction,
+                     backup_id: str = None):
         """Restore from backup"""
         await interaction.response.defer(ephemeral=True)
         
@@ -84,11 +86,62 @@ class BackupCommands(commands.Cog):
             embed = RinoxEmbed.error("No backups found.")
             await interaction.followup.send(embed=embed, ephemeral=True)
             return
-            
-        embed = RinoxEmbed.info(
-            f"Found `{len(backups)}` backups. Use `/setup` to manage.",
-            "📥 Restore"
-        )
+        
+        if not backup_id:
+            lines = []
+            for b in backups[:10]:
+                bid = b.get("id", "?")
+                bname = b.get("backup_name", "Unnamed")
+                bdate = str(b.get("created_at", "?"))[:10]
+                lines.append(f"`{bid}` — {bname} ({bdate})")
+            embed = RinoxEmbed.info(
+                "Available backups:\n" + "\n".join(lines) + 
+                "\n\nUse `/restore backup_id:<ID>` to restore.",
+                "📥 Restore"
+            )
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            return
+        
+        backup = None
+        for b in backups:
+            if str(b.get("id")) == backup_id:
+                backup = b
+                break
+        
+        if not backup:
+            embed = RinoxEmbed.error(f"No backup found with ID `{backup_id}`.")
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            return
+        
+        data = backup.get("backup_data")
+        if isinstance(data, str):
+            try: data = json.loads(data)
+            except:
+                embed = RinoxEmbed.error("Failed to parse backup data.")
+                await interaction.followup.send(embed=embed, ephemeral=True)
+                return
+        
+        settings = data.get("settings") if data else None
+        if not settings:
+            embed = RinoxEmbed.error("Backup contains no guild settings data.")
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            return
+        
+        # Restore settings (skip guild_id and primary keys)
+        safe_keys = {"ai_provider", "ai_model", "temperature", "max_tokens",
+                     "security_config", "moderation_config", "log_channel_id",
+                     "language", "custom_prompts", "enabled_features"}
+        update = {k: v for k, v in settings.items() if k in safe_keys and not k.startswith("_")}
+        
+        if update:
+            await self.bot.db.update_guild_settings(interaction.guild_id, **update)
+            embed = RinoxEmbed.success(
+                f"Restored {len(update)} settings from backup `{backup_id}`.",
+                "📥 Restore Complete"
+            )
+        else:
+            embed = RinoxEmbed.error("No compatible settings found in this backup.")
+        
         await interaction.followup.send(embed=embed, ephemeral=True)
 
 

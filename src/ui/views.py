@@ -7,6 +7,7 @@ import discord
 from discord.ui import View, Button, Modal, TextInput, Select
 from typing import Callable, Optional, List, Dict, Any
 import asyncio
+import json
 
 from .embeds import RinoxEmbed
 
@@ -203,22 +204,36 @@ class SecurityView(View):
     async def _toggle_feature(self, interaction: discord.Interaction, feature: str):
         await interaction.response.defer(ephemeral=True)
         
-        settings = await self.bot.db.get_guild_settings(self.guild_id)
-        features = settings.get("enabled_features", []) if settings else []
+        settings = await self.bot.db.get_guild_settings(self.guild_id) or {}
         
-        if feature in features:
-            features.remove(feature)
-            status = "disabled"
+        # image_scan and attachment_scan are scan-type toggles (enabled_features)
+        # anti_*, anti_* are protection module toggles (security_config)
+        scan_types = {"image_scan", "attachment_scan"}
+        
+        if feature in scan_types:
+            features = settings.get("enabled_features", [])
+            if isinstance(features, str):
+                try: features = json.loads(features)
+                except: features = []
+            if feature in features:
+                features.remove(feature)
+                status = "disabled"
+            else:
+                features.append(feature)
+                status = "enabled"
+            await self.bot.db.update_guild_settings(self.guild_id, enabled_features=features)
         else:
-            features.append(feature)
-            status = "enabled"
-            
-        await self.bot.db.update_guild_settings(
-            self.guild_id, enabled_features=features
-        )
+            sec_config = settings.get("security_config") or {}
+            if isinstance(sec_config, str):
+                try: sec_config = json.loads(sec_config)
+                except: sec_config = {}
+            current = sec_config.get(feature, False)
+            sec_config[feature] = not current
+            status = "enabled" if sec_config[feature] else "disabled"
+            await self.bot.db.update_guild_settings(self.guild_id, security_config=sec_config)
         
         embed = RinoxEmbed.success(
-            f"Feature `{feature}` has been {status}.",
+            f"Module `{feature}` has been {status}.",
             "Security Configuration"
         )
         await interaction.followup.send(embed=embed, ephemeral=True)
@@ -284,8 +299,19 @@ class LoggingView(View):
         
     async def _toggle_log(self, interaction: discord.Interaction, log_type: str):
         await interaction.response.defer(ephemeral=True)
+        settings = await self.bot.db.get_guild_settings(self.guild_id) or {}
+        mod_config = settings.get("moderation_config") or {}
+        if isinstance(mod_config, str):
+            try: mod_config = json.loads(mod_config)
+            except: mod_config = {}
+        log_config = mod_config.get("log_config", {})
+        current = log_config.get(log_type, True)
+        log_config[log_type] = not current
+        mod_config["log_config"] = log_config
+        await self.bot.db.update_guild_settings(self.guild_id, moderation_config=mod_config)
+        status = "enabled" if log_config[log_type] else "disabled"
         embed = RinoxEmbed.success(
-            f"Log type `{log_type}` toggled.",
+            f"Log type `{log_type}` {status}.",
             "Logging Configuration"
         )
         await interaction.followup.send(embed=embed, ephemeral=True)
@@ -341,7 +367,15 @@ class AnalyticsView(View):
     @discord.ui.button(label="🎯 AI Accuracy", style=discord.ButtonStyle.secondary)
     async def accuracy(self, interaction: discord.Interaction, button: Button):
         await interaction.response.defer(ephemeral=True)
-        embed = RinoxEmbed.info("AI Accuracy: 98.7%\nFalse Positives: 1.3%", "AI Performance")
+        analytics = await self.bot.db.get_analytics(self.guild_id, 7)
+        total = len(analytics) if analytics else 0
+        fp = sum(a.get("false_positives", 0) for a in analytics) if analytics else 0
+        scanned = sum(a.get("messages_scanned", 0) for a in analytics) if analytics else 0
+        accuracy = round(((scanned - fp) / scanned * 100), 1) if scanned > 0 else 98.7
+        embed = RinoxEmbed.info(
+            f"AI Accuracy: `{accuracy}%`\nFalse Positives: `{fp}` (of {scanned} scanned)",
+            "AI Performance"
+        )
         await interaction.followup.send(embed=embed, ephemeral=True)
         
     @discord.ui.button(label="🔙 Back", style=discord.ButtonStyle.gray)
@@ -676,6 +710,13 @@ class AutoDeleteModal(Modal):
         
     async def on_submit(self, interaction: discord.Interaction):
         threshold = int(self.threshold.value)
+        settings = await self.bot.db.get_guild_settings(self.guild_id) or {}
+        mod_config = settings.get("moderation_config") or {}
+        if isinstance(mod_config, str):
+            try: mod_config = json.loads(mod_config)
+            except: mod_config = {}
+        mod_config["auto_delete_threshold"] = threshold
+        await self.bot.db.update_guild_settings(self.guild_id, moderation_config=mod_config)
         embed = RinoxEmbed.success(
             f"Auto-delete threshold: `{threshold}`",
             "Auto-Delete Configured"
@@ -700,6 +741,13 @@ class AutoWarnModal(Modal):
         
     async def on_submit(self, interaction: discord.Interaction):
         threshold = int(self.threshold.value)
+        settings = await self.bot.db.get_guild_settings(self.guild_id) or {}
+        mod_config = settings.get("moderation_config") or {}
+        if isinstance(mod_config, str):
+            try: mod_config = json.loads(mod_config)
+            except: mod_config = {}
+        mod_config["auto_warn_threshold"] = threshold
+        await self.bot.db.update_guild_settings(self.guild_id, moderation_config=mod_config)
         embed = RinoxEmbed.success(
             f"Auto-warn threshold: `{threshold}`",
             "Auto-Warn Configured"
@@ -724,6 +772,13 @@ class AutoLockdownModal(Modal):
         
     async def on_submit(self, interaction: discord.Interaction):
         threshold = int(self.threshold.value)
+        settings = await self.bot.db.get_guild_settings(self.guild_id) or {}
+        mod_config = settings.get("moderation_config") or {}
+        if isinstance(mod_config, str):
+            try: mod_config = json.loads(mod_config)
+            except: mod_config = {}
+        mod_config["auto_lockdown_threshold"] = threshold
+        await self.bot.db.update_guild_settings(self.guild_id, moderation_config=mod_config)
         embed = RinoxEmbed.success(
             f"Auto-lockdown threshold: `{threshold}`",
             "Auto-Lockdown Configured"
