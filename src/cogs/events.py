@@ -6,6 +6,8 @@ Message scanning, member join, channel AI modes, auto-clean
 import discord
 from discord.ext import commands
 from datetime import timedelta, datetime
+from typing import Dict
+import time
 
 from ..ui.embeds import RinoxEmbed
 
@@ -17,6 +19,7 @@ class Events(commands.Cog):
         self.bot = bot
         self._settings_cache = {}
         self._cache_ttl = 30
+        self._cooldowns: Dict[str, float] = {}
 
     async def _get_settings(self, guild_id: int):
         """Cached guild settings lookup"""
@@ -45,6 +48,16 @@ class Events(commands.Cog):
         # === STAGE 2: Security Scanning ===
         await self._process_security_scan(message, settings)
 
+    async def _check_cooldown(self, guild_id: int, channel_id: int, user_id: int, cooldown: int) -> bool:
+        """Returns True if user is allowed to send"""
+        key = f"{guild_id}_{channel_id}_{user_id}"
+        now = time.time()
+        last = self._cooldowns.get(key, 0)
+        if now - last < cooldown:
+            return False
+        self._cooldowns[key] = now
+        return True
+
     async def _process_channel_ai_mode(self, message: discord.Message):
         """Auto-process message based on channel AI mode"""
         try:
@@ -61,6 +74,27 @@ class Events(commands.Cog):
         config = mode.get("config", {}) or {}
         content = message.content
         custom_instructions = config.get("custom_instructions")
+        cooldown_sec = config.get("cooldown", 0)
+
+        # Cooldown check
+        if cooldown_sec > 0:
+            allowed = self._check_cooldown(
+                message.guild.id, message.channel.id, message.author.id, cooldown_sec
+            )
+            if not allowed:
+                return
+
+        # Auto-language: inject instruction into system prompt
+        target_lang = config.get("target_lang")
+        if target_lang == "auto":
+            auto_lang_instruction = (
+                "Detect the user's language from their message and respond in the SAME language. "
+                "If they write in Bengali, reply in Bengali. If they write in English, reply in English."
+            )
+            custom_instructions = (
+                f"{auto_lang_instruction}\n\n{custom_instructions}"
+                if custom_instructions else auto_lang_instruction
+            )
 
         async with message.channel.typing():
             try:
@@ -78,7 +112,7 @@ class Events(commands.Cog):
                 elif feature == "translate":
                     if not content:
                         return
-                    target = config.get("target_lang", "english")
+                    target = target_lang if target_lang and target_lang != "auto" else "english"
                     response = await self.bot.ai.router.route_translate(
                         message.guild.id, content, target_lang=target,
                         system_prompt=custom_instructions,

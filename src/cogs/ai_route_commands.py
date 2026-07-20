@@ -6,7 +6,7 @@ Manage per-feature AI provider chains, channel AI modes
 import discord
 from discord import app_commands
 from discord.ext import commands
-from typing import Optional
+from typing import Optional, Dict
 
 from ..ui.embeds import RinoxEmbed
 
@@ -46,8 +46,25 @@ class AIRouteCommands(commands.Cog):
         app_commands.Choice(name="🛡️ Moderation — AI content moderation", value="moderation"),
     ]
 
+    TARGET_LANGS = [
+        app_commands.Choice(name="🌐 Auto — match user's language", value="auto"),
+        app_commands.Choice(name="English", value="english"),
+        app_commands.Choice(name="Bengali / বাংলা", value="bengali"),
+        app_commands.Choice(name="Hindi / हिन्दी", value="hindi"),
+        app_commands.Choice(name="Spanish / Español", value="spanish"),
+        app_commands.Choice(name="French / Français", value="french"),
+        app_commands.Choice(name="German / Deutsch", value="german"),
+        app_commands.Choice(name="Arabic / العربية", value="arabic"),
+        app_commands.Choice(name="Chinese / 中文", value="chinese"),
+        app_commands.Choice(name="Japanese / 日本語", value="japanese"),
+        app_commands.Choice(name="Russian / Русский", value="russian"),
+        app_commands.Choice(name="Portuguese / Português", value="portuguese"),
+        app_commands.Choice(name="Urdu / اردو", value="urdu"),
+    ]
+
     def __init__(self, bot):
         self.bot = bot
+        self._cooldowns: Dict[str, float] = {}
 
     ai_group = app_commands.Group(name="ai", description="AI Router and Channel Mode Configuration")
 
@@ -210,25 +227,61 @@ class AIRouteCommands(commands.Cog):
     # CHANNEL AI MODES
     # ========================
 
+    async def provider_autocomplete(self, interaction: discord.Interaction, current: str):
+        """Show only providers that are actually configured (loaded in AI Manager)"""
+        guild_settings = await self.bot.db.get_guild_settings(interaction.guild_id) or {}
+        default_provider = guild_settings.get("ai_provider", "openai")
+
+        configured = set(self.bot.ai.providers.keys())
+        # Always include the guild default even if not loaded yet
+        if default_provider not in configured and default_provider:
+            configured.add(default_provider)
+
+        choices = []
+        for name, value in [
+            ("OpenAI", "openai"), ("Anthropic", "anthropic"), ("Google", "google"),
+            ("Groq", "groq"), ("DeepSeek", "deepseek"), ("Mistral", "mistral"),
+            ("xAI", "xai"), ("Cohere", "cohere"), ("Ollama", "ollama"),
+            ("Azure OpenAI", "azure"), ("Custom", "custom"),
+        ]:
+            if value in configured and (not current or current.lower() in value.lower() or current.lower() in name.lower()):
+                label = f"{name}" + (" ⭐" if value == default_provider else "")
+                choices.append(app_commands.Choice(name=label, value=value))
+
+        return choices[:25]
+
+    async def model_autocomplete(self, interaction: discord.Interaction, current: str):
+        """Suggest model from guild defaults"""
+        guild_settings = await self.bot.db.get_guild_settings(interaction.guild_id) or {}
+        default_model = guild_settings.get("ai_model", "gpt-4o")
+
+        if not current or current.lower() in default_model.lower():
+            return [app_commands.Choice(name=f"{default_model} ⭐ (default)", value=default_model)]
+        return [app_commands.Choice(name=current, value=current)]
+
     @ai_group.command(name="channel-set", description="Set AI mode for a channel (auto-process messages)")
     @app_commands.describe(
         channel="Channel to configure",
         feature="AI feature to activate in this channel",
-        provider="AI provider (defaults to /provider setting if omitted)",
+        provider="AI provider (only shows configured providers)",
         model="Model name (defaults to provider default if omitted)",
+        target_lang="Target language (auto = match user's language)",
         custom_instructions="Custom system prompt for this channel's AI",
-        target_lang="Target language for translate (e.g., english, bengali)"
+        cooldown="Seconds between messages per user (0 = no cooldown)"
     )
     @app_commands.choices(feature=CHANNEL_FEATURES)
-    @app_commands.choices(provider=PROVIDERS)
+    @app_commands.choices(target_lang=TARGET_LANGS)
+    @app_commands.autocomplete(provider=provider_autocomplete)
+    @app_commands.autocomplete(model=model_autocomplete)
     @app_commands.checks.has_permissions(administrator=True)
     async def channel_set(self, interaction: discord.Interaction,
                           channel: discord.TextChannel,
                           feature: app_commands.Choice[str],
-                          provider: Optional[app_commands.Choice[str]] = None,
+                          provider: Optional[str] = None,
                           model: Optional[str] = None,
+                          target_lang: Optional[app_commands.Choice[str]] = None,
                           custom_instructions: Optional[str] = None,
-                          target_lang: Optional[str] = None):
+                          cooldown: Optional[app_commands.Range[int, 0, 300]] = None):
         await interaction.response.defer(ephemeral=True)
 
         # Fetch guild default settings
@@ -236,17 +289,17 @@ class AIRouteCommands(commands.Cog):
         default_provider = (settings or {}).get("ai_provider", "openai")
         default_model = (settings or {}).get("ai_model", "gpt-4o")
 
-        # Determine which provider/model to use
-        use_provider = provider.value if provider else default_provider
+        use_provider = provider or default_provider
         use_model = model or default_model
 
         config = {}
-        if feature.value == "translate" and target_lang:
-            config["target_lang"] = target_lang
+        if feature.value in ("translate", "chat") and target_lang:
+            config["target_lang"] = target_lang.value
         if custom_instructions:
             config["custom_instructions"] = custom_instructions
+        if cooldown is not None and cooldown > 0:
+            config["cooldown"] = cooldown
 
-        # Store chosen provider + model in config for per-channel override
         config["provider"] = use_provider
         config["model"] = use_model
 
@@ -273,11 +326,13 @@ class AIRouteCommands(commands.Cog):
             f"**Model:** `{use_model}`"
         )
         if custom_instructions:
-            msg += f"\n**Custom Instructions:** `{custom_instructions[:50]}{'...' if len(custom_instructions) > 50 else ''}`"
+            msg += f"\n**Custom:** `{custom_instructions[:50]}{'...' if len(custom_instructions) > 50 else ''}`"
         if target_lang:
-            msg += f"\n**Target Language:** `{target_lang}`"
+            msg += f"\n**Language:** `{'Auto' if target_lang.value == 'auto' else target_lang.name}`"
+        if cooldown:
+            msg += f"\n**Cooldown:** `{cooldown}s`"
         if not provider:
-            msg += "\n\n📌 *Using guild default provider. Set a custom one with `/provider`.*"
+            msg += "\n\n📌 *Using guild default provider (⭐). Set a custom one with `/provider`.*"
 
         embed = RinoxEmbed.success(msg, "Channel AI Mode Active")
         await interaction.followup.send(embed=embed, ephemeral=True)
@@ -328,6 +383,8 @@ class AIRouteCommands(commands.Cog):
             if cfg.get("custom_instructions"):
                 ci = cfg["custom_instructions"]
                 parts.append(f"**Prompt:** `{ci[:40]}{'...' if len(ci) > 40 else ''}`")
+            if cfg.get("cooldown"):
+                parts.append(f"**⏳ Cooldown:** `{cfg['cooldown']}s`")
             embed.add_field(
                 name=f"{ch_name}",
                 value=" | ".join(parts),

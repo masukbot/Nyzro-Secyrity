@@ -208,7 +208,7 @@ class SetupCommands(commands.Cog):
             name="🛠️ Setup",
             value=            "`/setup` - Open dashboard (recommended)\n"
                   "`/provider <provider> [model] [api_key] [base_url]` - Set default AI provider\n"
-                  "`/ai channel-set #channel <feature> [provider] [model] [custom_instructions]` - Per-channel AI\n"
+                  "`/ai channel-set #channel <feature> [provider] [model] [target_lang] [custom_instructions] [cooldown]` - Per-channel AI\n"
                   "`/ai route-set <feature> <provider>` - Per-feature provider override\n"
                   "`/ai channel-list` - List all AI channel modes\n"
                   "`/test` - Test AI connection",
