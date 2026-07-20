@@ -22,7 +22,7 @@ class AICommands(commands.Cog):
         """Show current AI configuration"""
         await interaction.response.defer(ephemeral=True)
         
-        settings = await self.bot.db.get_guild_settings(interaction.guild_id)
+        settings = await self.bot.db.get_guild_settings(interaction.guild_id) or {}
         
         embed = RinoxEmbed.create(
             title="🤖 AI Configuration",
