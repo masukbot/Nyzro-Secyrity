@@ -38,14 +38,13 @@ class Events(commands.Cog):
         if not message.guild:
             return
 
+        # === STAGE 1: Channel AI Mode (independent of guild settings) ===
+        await self._process_channel_ai_mode(message)
+
+        # === STAGE 2: Security Scanning (needs guild settings) ===
         settings = await self._get_settings(message.guild.id)
         if not settings:
             return
-
-        # === STAGE 1: Channel AI Mode Processing ===
-        await self._process_channel_ai_mode(message)
-
-        # === STAGE 2: Security Scanning ===
         await self._process_security_scan(message, settings)
 
     async def _check_cooldown(self, guild_id: int, channel_id: int, user_id: int, cooldown: int) -> bool:
