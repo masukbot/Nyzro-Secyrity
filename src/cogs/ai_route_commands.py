@@ -1,0 +1,287 @@
+"""
+Rinox Sentinel - AI Route Commands
+Manage per-feature AI provider chains, channel AI modes
+"""
+
+import discord
+from discord import app_commands
+from discord.ext import commands
+from typing import Optional
+
+from ..ui.embeds import RinoxEmbed
+
+
+class AIRouteCommands(commands.Cog):
+    """AI routing and channel mode configuration"""
+
+    FEATURES = [
+        app_commands.Choice(name="Chat", value="chat"),
+        app_commands.Choice(name="Moderation", value="moderation"),
+        app_commands.Choice(name="Translate", value="translate"),
+        app_commands.Choice(name="Summarize", value="summarize"),
+        app_commands.Choice(name="Vision", value="vision"),
+        app_commands.Choice(name="Image Generation", value="image_gen"),
+    ]
+
+    PROVIDERS = [
+        app_commands.Choice(name="OpenAI", value="openai"),
+        app_commands.Choice(name="Anthropic", value="anthropic"),
+        app_commands.Choice(name="Google Gemini", value="google"),
+        app_commands.Choice(name="Groq", value="groq"),
+        app_commands.Choice(name="DeepSeek", value="deepseek"),
+        app_commands.Choice(name="Mistral", value="mistral"),
+        app_commands.Choice(name="xAI (Grok)", value="xai"),
+        app_commands.Choice(name="Cohere", value="cohere"),
+        app_commands.Choice(name="Ollama", value="ollama"),
+        app_commands.Choice(name="Azure OpenAI", value="azure"),
+        app_commands.Choice(name="Custom", value="custom"),
+    ]
+
+    CHANNEL_FEATURES = [
+        app_commands.Choice(name="Auto Chat (AI replies to every message)", value="chat"),
+        app_commands.Choice(name="Auto Translate (translates to English)", value="translate"),
+        app_commands.Choice(name="Auto Summarize (summarizes conversation)", value="summarize"),
+        app_commands.Choice(name="Auto Image Generate (text to image)", value="image_gen"),
+    ]
+
+    def __init__(self, bot):
+        self.bot = bot
+
+    ai_group = app_commands.Group(name="ai", description="AI Router and Channel Mode Configuration")
+
+    # ========================
+    # AI ROUTE MANAGEMENT
+    # ========================
+
+    @ai_group.command(name="route-set", description="Set AI provider for a feature")
+    @app_commands.describe(
+        feature="Feature to configure",
+        provider="AI provider for this feature",
+        model="Model name (e.g., gpt-4o, claude-3-5-sonnet)",
+        priority="Priority (0=primary, 1=first fallback, etc.)",
+        max_daily="Daily request limit (0=unlimited)"
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def route_set(self, interaction: discord.Interaction,
+                        feature: app_commands.Choice[str],
+                        provider: app_commands.Choice[str],
+                        model: Optional[str] = None,
+                        priority: app_commands.Range[int, 0, 10] = 0,
+                        max_daily: app_commands.Range[int, 0, 100000] = 0):
+        await interaction.response.defer(ephemeral=True)
+
+        await self.bot.db.set_feature_provider(
+            interaction.guild_id,
+            feature.value,
+            provider.value,
+            model,
+            priority,
+            max_daily
+        )
+        self.bot.ai.router.invalidate_cache(interaction.guild_id, feature.value)
+
+        model_text = f"`{model}`" if model else "default"
+        embed = RinoxEmbed.success(
+            f"**Feature:** `{feature.name}`\n"
+            f"**Provider:** `{provider.name}`\n"
+            f"**Model:** {model_text}\n"
+            f"**Priority:** `{priority}`\n"
+            f"**Daily Limit:** `{'Unlimited' if max_daily == 0 else max_daily}`",
+            "Route Configured"
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @ai_group.command(name="route-remove", description="Remove a provider from a feature's chain")
+    @app_commands.describe(
+        feature="Feature to modify",
+        provider="Provider to remove"
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def route_remove(self, interaction: discord.Interaction,
+                           feature: app_commands.Choice[str],
+                           provider: app_commands.Choice[str]):
+        await interaction.response.defer(ephemeral=True)
+
+        await self.bot.db.remove_feature_provider(
+            interaction.guild_id, feature.value, provider.value
+        )
+        self.bot.ai.router.invalidate_cache(interaction.guild_id, feature.value)
+
+        embed = RinoxEmbed.success(
+            f"Removed `{provider.name}` from `{feature.name}` chain.",
+            "Provider Removed"
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @ai_group.command(name="route-list", description="Show all feature provider chains")
+    @app_commands.describe(feature="Filter by feature (optional)")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def route_list(self, interaction: discord.Interaction,
+                         feature: Optional[str] = None):
+        await interaction.response.defer(ephemeral=True)
+
+        configs = await self.bot.db.get_all_feature_configs(interaction.guild_id)
+
+        if not configs:
+            embed = RinoxEmbed.info("No custom routes configured. Default routing will be used.", "AI Routes")
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            return
+
+        embed = RinoxEmbed.create(
+            title="AI Provider Routes",
+            color=RinoxEmbed.INFO
+        )
+
+        features_to_show = [feature] if feature else list(configs.keys())
+        for feat in features_to_show:
+            if feat not in configs:
+                continue
+            providers_text = ""
+            for p in configs[feat]:
+                model_text = f" ({p['model']})" if p.get("model") else ""
+                status = "ACTIVE" if p.get("enabled") else "DISABLED"
+                daily = f" [{p['daily_used']}/{p['max_daily']}]" if p.get("max_daily", 0) > 0 else ""
+                providers_text += f"{status} `#{p['priority']}` **{p['provider']}**{model_text}{daily}\n"
+
+            embed.add_field(
+                name=f"{feat.upper()}",
+                value=providers_text or "`No providers configured`",
+                inline=False
+            )
+
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @ai_group.command(name="route-test", description="Test a feature's provider chain")
+    @app_commands.describe(feature="Feature to test")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def route_test(self, interaction: discord.Interaction,
+                         feature: app_commands.Choice[str]):
+        await interaction.response.defer(ephemeral=True)
+
+        embed = RinoxEmbed.loading(f"Testing {feature.name} routing...")
+        msg = await interaction.followup.send(embed=embed, ephemeral=True)
+
+        response = await self.bot.ai.router.route(
+            interaction.guild_id,
+            feature.value,
+            messages=[{"role": "user", "content": "Say 'okay' if you are working."}],
+            max_tokens=10,
+            temperature=0.1
+        )
+
+        embed = RinoxEmbed.create(
+            title=f"{feature.name} Route Test",
+            color=RinoxEmbed.SUCCESS if response.success else RinoxEmbed.DANGER
+        )
+
+        embed.add_field(name="Status", value="Success" if response.success else "Failed", inline=True)
+        embed.add_field(name="Provider", value=f"`{response.provider}`", inline=True)
+        embed.add_field(name="Model", value=f"`{response.model}`", inline=True)
+        embed.add_field(name="Latency", value=f"`{response.latency_ms}ms`", inline=True)
+        embed.add_field(name="Response", value=response.content[:200] if response.success else response.error, inline=False)
+
+        await msg.edit(embed=embed)
+
+    @ai_group.command(name="route-reset-credits", description="Reset daily usage counter for a provider")
+    @app_commands.describe(
+        feature="Feature",
+        provider="Provider to reset"
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def route_reset_credits(self, interaction: discord.Interaction,
+                                   feature: app_commands.Choice[str],
+                                   provider: app_commands.Choice[str]):
+        await interaction.response.defer(ephemeral=True)
+
+        await self.bot.db.reset_daily_usage(
+            interaction.guild_id, feature.value, provider.value
+        )
+        self.bot.ai.router.invalidate_cache(interaction.guild_id, feature.value)
+
+        embed = RinoxEmbed.success(
+            f"Daily usage reset for `{provider.name}` on `{feature.name}`.",
+            "Credits Reset"
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    # ========================
+    # CHANNEL AI MODES
+    # ========================
+
+    @ai_group.command(name="channel-set", description="Set AI mode for a channel (auto-process messages)")
+    @app_commands.describe(
+        channel="Channel to configure",
+        feature="AI feature to activate in this channel",
+        target_lang="Target language for translate (e.g., english, bengali, spanish)"
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def channel_set(self, interaction: discord.Interaction,
+                          channel: discord.TextChannel,
+                          feature: app_commands.Choice[str],
+                          target_lang: Optional[str] = None):
+        await interaction.response.defer(ephemeral=True)
+
+        config = {}
+        if feature.value == "translate" and target_lang:
+            config["target_lang"] = target_lang
+
+        await self.bot.db.set_channel_ai_mode(
+            interaction.guild_id, channel.id, feature.value, config
+        )
+
+        embed = RinoxEmbed.success(
+            f"**Channel:** {channel.mention}\n"
+            f"**Mode:** `{feature.name}`\n"
+            f"{f'**Target Language:** {target_lang}' if target_lang else ''}",
+            "Channel AI Mode Active"
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @ai_group.command(name="channel-remove", description="Remove AI mode from a channel")
+    @app_commands.describe(channel="Channel to remove AI mode from")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def channel_remove(self, interaction: discord.Interaction,
+                             channel: discord.TextChannel):
+        await interaction.response.defer(ephemeral=True)
+
+        await self.bot.db.remove_channel_ai_mode(interaction.guild_id, channel.id)
+
+        embed = RinoxEmbed.success(
+            f"AI mode removed from {channel.mention}.",
+            "Channel Mode Removed"
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @ai_group.command(name="channel-list", description="List all channels with AI modes")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def channel_list(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+
+        modes = await self.bot.db.get_all_channel_ai_modes(interaction.guild_id)
+
+        if not modes:
+            embed = RinoxEmbed.info("No AI mode channels configured.", "Channel AI Modes")
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            return
+
+        embed = RinoxEmbed.create(
+            title="Channel AI Modes",
+            color=RinoxEmbed.INFO
+        )
+
+        for m in modes:
+            channel = interaction.guild.get_channel(m["channel_id"])
+            ch_name = channel.mention if channel else f"`{m['channel_id']}`"
+            config = m.get("config", {})
+            extra = f" -> {config.get('target_lang', '')}" if config else ""
+            embed.add_field(
+                name=f"{ch_name}",
+                value=f"Mode: `{m['feature']}`{extra}",
+                inline=False
+            )
+
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+async def setup(bot):
+    await bot.add_cog(AIRouteCommands(bot))
