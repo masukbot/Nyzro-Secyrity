@@ -78,7 +78,7 @@ class Events(commands.Cog):
 
         # Cooldown check
         if cooldown_sec > 0:
-            allowed = self._check_cooldown(
+            allowed = await self._check_cooldown(
                 message.guild.id, message.channel.id, message.author.id, cooldown_sec
             )
             if not allowed:
@@ -108,6 +108,9 @@ class Events(commands.Cog):
                     )
                     if response.success:
                         await message.reply(response.content[:2000])
+                    else:
+                        await message.reply(f"⚠️ {response.error[:200]}")
+                        self.bot.logger.warning(f"Chat AI error: {response.error}")
 
                 elif feature == "translate":
                     if not content:
@@ -119,6 +122,8 @@ class Events(commands.Cog):
                     )
                     if response.success:
                         await message.reply(response.content[:2000])
+                    else:
+                        await message.reply(f"⚠️ {response.error[:200]}")
 
                 elif feature == "summarize":
                     if not content:
@@ -134,6 +139,8 @@ class Events(commands.Cog):
                     )
                     if response.success:
                         await message.reply(f"📝 **Summary:**\n{response.content[:2000]}")
+                    else:
+                        await message.reply(f"⚠️ {response.error[:200]}")
 
                 elif feature == "vision":
                     if not message.attachments:
@@ -146,6 +153,13 @@ class Events(commands.Cog):
                     )
                     if response.success:
                         await message.reply(response.content[:2000])
+                    else:
+                        err = response.error or "Vision analysis failed"
+                        if "image input" in err.lower() or "image" in err.lower():
+                            await message.reply("🖼️ This AI model doesn't support image analysis. Try a different provider (e.g., OpenAI, Google Gemini) or use a vision-capable model.")
+                        else:
+                            await message.reply(f"⚠️ {err[:200]}")
+                        self.bot.logger.warning(f"Vision error: {err}")
 
                 elif feature == "image_gen":
                     if not content:
@@ -162,6 +176,8 @@ class Events(commands.Cog):
                         )
                         embed.set_image(url=response.content)
                         await message.reply(embed=embed)
+                    else:
+                        await message.reply(f"⚠️ {response.error[:200] if hasattr(response, 'error') and response.error else 'Image generation failed'}")
 
                 elif feature == "moderation":
                     if not content:
@@ -175,6 +191,8 @@ class Events(commands.Cog):
                             await message.reply(f"✅ Content looks safe.")
                         else:
                             await message.reply(response.content[:2000])
+                    else:
+                        await message.reply(f"⚠️ {response.error[:200]}")
 
             except Exception as e:
                 self.bot.logger.error(f"Channel AI mode error: {e}")
