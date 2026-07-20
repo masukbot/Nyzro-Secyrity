@@ -15,6 +15,7 @@ from discord.ext import commands, tasks
 from discord import app_commands
 import asyncpg
 import redis.asyncio as redis
+from aiohttp import web
 
 from .config import BotConfig
 from .database import DatabaseManager, SQLiteDatabase
@@ -122,6 +123,8 @@ class RinoxBot(commands.Bot):
             self.auto_clean_loop.start()
         except Exception as e:
             logger.warning(f"Could not start auto_clean_loop task: {e}")
+        # Start healthcheck HTTP server for Railway
+        asyncio.create_task(self._start_healthcheck())
         
         logger.info("🛡️ Rinox Sentinel is ready!")
         
@@ -219,6 +222,22 @@ class RinoxBot(commands.Bot):
         """Clean up expired cache entries"""
         if self.cache:
             await self.cache.cleanup()
+
+    async def _start_healthcheck(self):
+        """Lightweight HTTP server for Railway healthcheck"""
+        async def health(request):
+            return web.Response(text="ok", status=200)
+
+        app = web.Application()
+        app.router.add_get("/", health)
+        app.router.add_get("/health", health)
+
+        port = int(os.getenv("PORT", 8080))
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "0.0.0.0", port)
+        await site.start()
+        logger.info(f"✅ Healthcheck server started on port {port}")
             
     async def on_ready(self):
         """Called when bot is ready"""
