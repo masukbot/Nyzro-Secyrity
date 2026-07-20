@@ -71,6 +71,9 @@ class Events(commands.Cog):
 
         feature = mode.get("feature")
         config = mode.get("config", {}) or {}
+        if isinstance(config, str):
+            import json
+            config = json.loads(config) if config else {}
         content = message.content
         custom_instructions = config.get("custom_instructions")
         cooldown_sec = config.get("cooldown", 0)

@@ -373,6 +373,9 @@ class AIRouteCommands(commands.Cog):
             channel = interaction.guild.get_channel(m["channel_id"])
             ch_name = channel.mention if channel else f"`{m['channel_id']}`"
             cfg = m.get("config", {}) or {}
+            if isinstance(cfg, str):
+                import json
+                cfg = json.loads(cfg) if cfg else {}
             parts = [f"**Mode:** `{m['feature']}`"]
             if cfg.get("provider"):
                 parts.append(f"**Provider:** `{cfg['provider']}`")
