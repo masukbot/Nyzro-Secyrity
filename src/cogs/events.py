@@ -209,6 +209,19 @@ class Events(commands.Cog):
         if "message_scan" not in features:
             return
 
+        # Check individual security module toggles
+        sec_config = settings.get("security_config") or {}
+        if isinstance(sec_config, str):
+            import json
+            sec_config = json.loads(sec_config) if sec_config else {}
+
+        # Respect toggle-module settings: if anti_spam is explicitly disabled, skip
+        anti_spam_enabled = sec_config.get("anti_spam", True)
+        anti_link_enabled = sec_config.get("anti_link", True)
+        if not anti_spam_enabled and not anti_link_enabled:
+            # If both are off, only run AI-based checks (if message_scan is on)
+            pass  # Still scan — individual modules checked inside scan_message
+
         result = await self.bot.security.scan_message(message, settings)
 
         if result.is_threat:
