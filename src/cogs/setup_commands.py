@@ -112,66 +112,7 @@ class SetupCommands(commands.Cog):
         embed = RinoxEmbed.success(msg, "🤖 AI Provider Updated")
         await interaction.followup.send(embed=embed, ephemeral=True)
         
-    # ========================
-    # /model - Set Model
-    # ========================
-    @app_commands.command(name="model", description="🧠 Set AI Model")
-    @app_commands.describe(model="Model name (e.g., gpt-4o, claude-3-5-sonnet)")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def model(self, interaction: discord.Interaction, model: str):
-        """Set AI model"""
-        await interaction.response.defer(ephemeral=True)
-        
-        await self.bot.db.update_guild_settings(
-            interaction.guild_id, ai_model=model
-        )
-        
-        embed = RinoxEmbed.success(
-            f"AI Model set to: `{model}`",
-            "🧠 Model Updated"
-        )
-        await interaction.followup.send(embed=embed, ephemeral=True)
-        
-    # ========================
-    # /apikey - Set API Key
-    # ========================
-    @app_commands.command(name="apikey", description="🔑 Set AI API Key")
-    @app_commands.describe(api_key="Your API key")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def apikey(self, interaction: discord.Interaction, api_key: str):
-        """Set API key (encrypted storage)"""
-        await interaction.response.defer(ephemeral=True)
-        
-        # In production, encrypt this
-        await self.bot.db.update_guild_settings(
-            interaction.guild_id, ai_api_key=api_key
-        )
-        
-        embed = RinoxEmbed.success(
-            "API Key has been securely stored.",
-            "🔑 API Key Updated"
-        )
-        embed.set_footer(text="Your key is encrypted and never exposed.")
-        await interaction.followup.send(embed=embed, ephemeral=True)
-        
-    # ========================
-    # /baseurl - Set Base URL
-    # ========================
-    @app_commands.command(name="baseurl", description="🔗 Set Custom Base URL")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def baseurl(self, interaction: discord.Interaction, base_url: str):
-        """Set custom base URL for API"""
-        await interaction.response.defer(ephemeral=True)
-        
-        await self.bot.db.update_guild_settings(
-            interaction.guild_id, ai_base_url=base_url
-        )
-        
-        embed = RinoxEmbed.success(
-            f"Base URL set to: `{base_url}`",
-            "🔗 Base URL Updated"
-        )
-        await interaction.followup.send(embed=embed, ephemeral=True)
+
         
     # ========================
     # /test - Test AI Connection
@@ -265,11 +206,9 @@ class SetupCommands(commands.Cog):
         
         embed.add_field(
             name="🛠️ Setup",
-            value=            "`/setup` - Open dashboard\n"
-                  "`/provider <provider> [model] [api_key] [base_url]` - Set AI provider\n"
-                  "`/model` - Set AI model\n"
-                  "`/apikey` - Set API key\n"
-                  "`/baseurl` - Set base URL\n"
+            value=            "`/setup` - Open dashboard (recommended)\n"
+                  "`/provider <provider> [model] [api_key] [base_url]` - Set AI provider (all-in-one)\n"
+                  "`/ai route-set` - Set per-feature provider (chat, moderation, etc.)\n"
                   "`/test` - Test AI connection",
             inline=False
         )

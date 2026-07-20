@@ -53,7 +53,7 @@ class AIRouteCommands(commands.Cog):
     # AI ROUTE MANAGEMENT
     # ========================
 
-    @ai_group.command(name="route-set", description="Set AI provider for a feature")
+    @ai_group.command(name="route-set", description="Set per-feature AI provider (for chat, moderation, vision, etc.)")
     @app_commands.describe(
         feature="Feature to configure",
         provider="AI provider for this feature",
