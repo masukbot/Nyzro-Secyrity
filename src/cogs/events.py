@@ -20,6 +20,7 @@ class Events(commands.Cog):
         self._settings_cache = {}
         self._cache_ttl = 30
         self._cooldowns: Dict[str, float] = {}
+        self._join_tracker: Dict[int, list] = {}  # guild_id -> [timestamp, ...]
 
     async def _get_settings(self, guild_id: int):
         """Cached guild settings lookup"""
@@ -279,11 +280,43 @@ class Events(commands.Cog):
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
-        """Scan new members"""
+        """Scan new members — anti-raid + user scan"""
         settings = await self.bot.db.get_guild_settings(member.guild.id)
         if not settings:
             return
 
+        sec_config = settings.get("security_config") or {}
+        if isinstance(sec_config, str):
+            import json
+            sec_config = json.loads(sec_config) if sec_config else {}
+
+        # === Anti-Raid: track joins in 60s window ===
+        anti_raid = sec_config.get("anti_raid", True)
+        if anti_raid:
+            now = time.time()
+            guild_tracker = self._join_tracker.setdefault(member.guild.id, [])
+            guild_tracker.append(now)
+            # Keep only last 60 seconds
+            self._join_tracker[member.guild.id] = [t for t in guild_tracker if now - t < 60]
+            join_count = len(self._join_tracker[member.guild.id])
+
+            raid_threshold = 5  # more than 5 joins in 60s = raid
+            if join_count > raid_threshold:
+                try:
+                    await member.kick(reason=f"Rinox Anti-Raid: {join_count} joins in 60s")
+                    await self.bot.db.log_security_event(
+                        member.guild.id, "raid_detected",
+                        user_id=member.id,
+                        threat_level=3,
+                        risk_score=80,
+                        action_taken="kick",
+                        evidence=f"Anti-raid: {join_count} joins in 60 seconds"
+                    )
+                except:
+                    pass
+                return  # Don't proceed with user scan if kicked
+
+        # === User Scan ===
         result = await self.bot.security.scan_user(member, settings)
 
         if result.risk_score > 50:
@@ -296,6 +329,76 @@ class Events(commands.Cog):
                 action_taken="log",
                 evidence=result.evidence
             )
+
+    @commands.Cog.listener()
+    async def on_member_update(self, before: discord.Member, after: discord.Member):
+        """Detect suspicious account changes — alt detection"""
+        if before.guild is None or before.guild.id is None:
+            return
+        before_avatar = before.avatar if hasattr(before, 'avatar') else None
+        after_avatar = after.avatar if hasattr(after, 'avatar') else None
+        if before_avatar == after_avatar and before.name == after.name:
+            return
+
+        settings = await self._get_settings(after.guild.id)
+        if not settings:
+            return
+
+        sec_config = settings.get("security_config") or {}
+        if isinstance(sec_config, str):
+            import json
+            try: sec_config = json.loads(sec_config) if sec_config else {}
+            except: sec_config = {}
+
+        if not sec_config.get("anti_raid", True):
+            return
+
+        # Check account age
+        age_days = (discord.utils.utcnow() - after.created_at).days
+        if age_days < 7:
+            await self.bot.db.log_security_event(
+                after.guild.id, "alt_account",
+                user_id=after.id,
+                threat_level=2,
+                risk_score=60,
+                action_taken="log",
+                evidence=f"Account age: {age_days} days (threshold: 7)"
+            )
+
+    @commands.Cog.listener()
+    async def on_guild_channel_create(self, channel: discord.abc.GuildChannel):
+        """Anti-nuke: auto-delete channels created by non-admin users"""
+        settings = await self._get_settings(channel.guild.id)
+        if not settings:
+            return
+
+        sec_config = settings.get("security_config") or {}
+        if isinstance(sec_config, str):
+            import json
+            try: sec_config = json.loads(sec_config) if sec_config else {}
+            except: sec_config = {}
+
+        if not sec_config.get("anti_nuke", True):
+            return
+
+        # Fetch audit log to find who created the channel
+        try:
+            async for entry in channel.guild.audit_logs(limit=5, action=discord.AuditLogAction.channel_create):
+                if entry.target.id == channel.id:
+                    creator = entry.user
+                    if creator and not creator.guild_permissions.administrator:
+                        await channel.delete(reason=f"Rinox Anti-Nuke: created by {creator} (not admin)")
+                        await self.bot.db.log_security_event(
+                            channel.guild.id, "anti_nuke",
+                            user_id=creator.id,
+                            threat_level=3,
+                            risk_score=80,
+                            action_taken="channel_delete",
+                            evidence=f"Deleted channel #{channel.name} created by non-admin"
+                        )
+                    break
+        except:
+            pass
 
     @commands.Cog.listener()
     async def on_message_delete(self, message: discord.Message):

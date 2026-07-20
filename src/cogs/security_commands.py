@@ -46,10 +46,12 @@ class SecurityCommands(commands.Cog):
         try:
             if type.value == "message":
                 if not target:
-                    result = await self.bot.security.scan_message(
-                        interaction.message or await self._get_last_message(interaction),
-                        settings or {}
-                    )
+                    ref = interaction.message or await self._get_last_message(interaction)
+                    if not ref:
+                        embed = RinoxEmbed.error("No message to scan. Reply to a message or provide a message ID.", "Scan Error")
+                        await msg.edit(embed=embed)
+                        return
+                    result = await self.bot.security.scan_message(ref, settings or {})
                 else:
                     try:
                         msg_id = int(target)

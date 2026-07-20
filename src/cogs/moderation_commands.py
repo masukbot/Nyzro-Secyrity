@@ -17,6 +17,18 @@ class ModerationCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         
+    async def _send_mod_log(self, guild_id: int, embed: discord.Embed):
+        """Send moderation action to log channel"""
+        settings = await self.bot.db.get_guild_settings(guild_id)
+        if not settings or not settings.get("log_channel_id"):
+            return
+        log_channel = self.bot.get_channel(settings["log_channel_id"])
+        if log_channel:
+            try:
+                await log_channel.send(embed=embed)
+            except:
+                pass
+    
     @app_commands.command(name="warn", description="⚠️ Warn a User")
     @app_commands.describe(
         user="User to warn",
@@ -51,6 +63,17 @@ class ModerationCommands(commands.Cog):
         except:
             pass
             
+        log_embed = RinoxEmbed.create(
+            title="⚠️ Warning Issued",
+            color=RinoxEmbed.WARNING
+        )
+        log_embed.add_field(name="User", value=f"{user} ({user.id})", inline=True)
+        log_embed.add_field(name="Moderator", value=interaction.user.mention, inline=True)
+        log_embed.add_field(name="Reason", value=reason, inline=False)
+        log_embed.add_field(name="Weight", value=str(weight), inline=True)
+        log_embed.set_footer(text=f"User ID: {user.id}")
+        await self._send_mod_log(interaction.guild_id, log_embed)
+
         embed = RinoxEmbed.success(
             f"**User:** {user.mention}\n"
             f"**Reason:** {reason}\n"
@@ -77,6 +100,16 @@ class ModerationCommands(commands.Cog):
         until = discord.utils.utcnow() + timedelta(minutes=duration)
         await user.timeout(until, reason=reason)
         
+        log_embed = RinoxEmbed.create(
+            title="🔇 User Muted",
+            color=RinoxEmbed.WARNING
+        )
+        log_embed.add_field(name="User", value=f"{user} ({user.id})", inline=True)
+        log_embed.add_field(name="Moderator", value=interaction.user.mention, inline=True)
+        log_embed.add_field(name="Duration", value=f"{duration} minutes", inline=True)
+        log_embed.add_field(name="Reason", value=reason, inline=False)
+        await self._send_mod_log(interaction.guild_id, log_embed)
+
         embed = RinoxEmbed.success(
             f"**User:** {user.mention}\n"
             f"**Duration:** {duration} minutes\n"
@@ -99,6 +132,15 @@ class ModerationCommands(commands.Cog):
         
         await user.kick(reason=reason)
         
+        log_embed = RinoxEmbed.create(
+            title="👢 User Kicked",
+            color=RinoxEmbed.DANGER
+        )
+        log_embed.add_field(name="User", value=f"{user} ({user.id})", inline=True)
+        log_embed.add_field(name="Moderator", value=interaction.user.mention, inline=True)
+        log_embed.add_field(name="Reason", value=reason, inline=False)
+        await self._send_mod_log(interaction.guild_id, log_embed)
+
         embed = RinoxEmbed.success(
             f"**User:** {user.mention}\n"
             f"**Reason:** {reason}",
@@ -122,6 +164,16 @@ class ModerationCommands(commands.Cog):
         
         await user.ban(reason=reason, delete_message_days=delete_days)
         
+        log_embed = RinoxEmbed.create(
+            title="🔨 User Banned",
+            color=RinoxEmbed.DANGER
+        )
+        log_embed.add_field(name="User", value=f"{user} ({user.id})", inline=True)
+        log_embed.add_field(name="Moderator", value=interaction.user.mention, inline=True)
+        log_embed.add_field(name="Reason", value=reason, inline=False)
+        log_embed.add_field(name="Messages Deleted", value=f"{delete_days} days", inline=True)
+        await self._send_mod_log(interaction.guild_id, log_embed)
+
         embed = RinoxEmbed.success(
             f"**User:** {user.mention}\n"
             f"**Reason:** {reason}\n"
