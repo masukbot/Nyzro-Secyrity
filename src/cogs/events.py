@@ -200,7 +200,7 @@ class Events(commands.Cog):
             except Exception as e:
                 self.bot.logger.error(f"Channel AI mode error: {e}")
                 try:
-                    await message.reply(f"❌ AI processing error: {str(e)[:100]}")
+                    await message.reply(f"⚠️ {str(e)[:200]}")
                 except Exception:
                     pass
 
@@ -224,6 +224,20 @@ class Events(commands.Cog):
             pass  # Still scan — individual modules checked inside scan_message
 
         result = await self.bot.security.scan_message(message, settings)
+
+        # Track daily analytics
+        try:
+            await self.bot.db.update_analytics(
+                message.guild.id,
+                messages_scanned=1,
+                threats_detected=1 if result.is_threat else 0,
+                actions_taken=len(result.actions) if result.is_threat else 0,
+                false_positives=0,
+                ai_calls=1 if "ai_analysis" in result.pipeline_stages else 0,
+                avg_risk_score=result.risk_score
+            )
+        except:
+            pass
 
         if result.is_threat:
             await self.bot.db.log_security_event(

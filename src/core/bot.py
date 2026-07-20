@@ -243,6 +243,26 @@ class RinoxBot(commands.Bot):
         """Called when bot is ready"""
         logger.info(f"🤖 Logged in as {self.user} (ID: {self.user.id})")
         logger.info(f"📊 Connected to {len(self.guilds)} guilds")
+
+    async def on_app_command_error(self, interaction: discord.Interaction, error: Exception):
+        """Global error handler for app commands"""
+        error_msg = str(error)[:200]
+
+        if isinstance(error, app_commands.MissingPermissions):
+            error_msg = "You don't have permission to use this command."
+        elif isinstance(error, app_commands.BotMissingPermissions):
+            error_msg = "I don't have the required permissions to execute this command."
+        elif isinstance(error, app_commands.CommandOnCooldown):
+            error_msg = f"Command on cooldown. Try again in {error.retry_after:.0f}s."
+        elif isinstance(error, app_commands.TransformerError):
+            error_msg = f"Invalid value provided."
+
+        if interaction.response.is_done():
+            await interaction.followup.send(f"❌ {error_msg}", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"❌ {error_msg}", ephemeral=True)
+
+        self.logger.warning(f"Command error from {interaction.user}: {error}")
         
     async def on_guild_join(self, guild: discord.Guild):
         """Handle guild join"""
