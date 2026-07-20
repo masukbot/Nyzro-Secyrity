@@ -109,10 +109,17 @@ class AIRouter:
         providers = await self.get_providers(guild_id, feature)
 
         if not providers:
-            providers = [RouteConfig(
-                provider=self.ai.primary_provider or "openai",
-                model=None
-            )]
+            # Try guild's default provider first
+            guild_provider = None
+            if self.db:
+                try:
+                    settings = await self.db.get_guild_settings(guild_id)
+                    if settings:
+                        guild_provider = settings.get("ai_provider")
+                except:
+                    pass
+            provider_name = guild_provider or self.ai.primary_provider or "openai"
+            providers = [RouteConfig(provider=provider_name, model=None)]
 
         last_error = None
         for cfg in providers:

@@ -146,7 +146,7 @@ class SecurityEngine:
         # Stage 3: AI Content Analysis (if risk is moderate or high message length)
         if risk_score >= 20 or len(content) > 50:
             stages.append("ai_analysis")
-            ai_risk, ai_confidence, ai_issues = await self._ai_analyze_text(content)
+            ai_risk, ai_confidence, ai_issues = await self._ai_analyze_text(content, message.guild.id)
             risk_score = max(risk_score, ai_risk)
             confidence = min(confidence, ai_confidence)
             detected_issues.extend(ai_issues)
@@ -386,7 +386,7 @@ class SecurityEngine:
             
         return risk
         
-    async def _ai_analyze_text(self, content: str) -> Tuple[int, float, List[str]]:
+    async def _ai_analyze_text(self, content: str, guild_id: int = 0) -> Tuple[int, float, List[str]]:
         """Use AI to analyze text content"""
         if not self.ai or not content:
             return 0, 1.0, []
@@ -409,12 +409,21 @@ ISSUES:
 
         messages = [{"role": "user", "content": content[:2000]}]
         
-        response = await self.ai.chat(
-            messages=messages,
-            system_prompt=system_prompt,
-            temperature=0.1,
-            max_tokens=500
-        )
+        # Use router to ensure guild's provider is used (auto-loads from settings)
+        router = getattr(self.ai, 'router', None)
+        if router and guild_id:
+            response = await router.route(
+                guild_id, "moderation", messages,
+                system_prompt=system_prompt,
+                temperature=0.1, max_tokens=500
+            )
+        else:
+            response = await self.ai.chat(
+                messages=messages,
+                system_prompt=system_prompt,
+                temperature=0.1,
+                max_tokens=500
+            )
         
         if not response.success:
             return 0, 0.5, ["AI analysis failed"]
