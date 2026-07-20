@@ -792,7 +792,46 @@ class AIManager:
             logger.info(f"🎯 Primary: {self.primary_provider}, Fallbacks: {self.fallback_providers}")
             
         self._initialized = True
-        
+
+    async def load_provider_from_settings(self, provider_name: str, api_key: str,
+                                           model: Optional[str] = None,
+                                           base_url: Optional[str] = None):
+        """Dynamically load a provider from guild settings (not env vars)"""
+        if provider_name in self.providers:
+            return
+        PROVIDER_CONFIGS = {
+            "openai":     (OpenAIProvider,           "gpt-4o",                              None),
+            "anthropic":  (AnthropicProvider,        "claude-3-5-sonnet-20241022",         None),
+            "groq":       (GroqProvider,             "llama-3.3-70b-versatile",            None),
+            "google":     (GoogleProvider,           "gemini-1.5-pro",                     None),
+            "deepseek":   (OpenAICompatibleProvider, "deepseek-chat",                      "https://api.deepseek.com/v1"),
+            "mistral":    (OpenAICompatibleProvider, "mistral-large-latest",               "https://api.mistral.ai/v1"),
+            "xai":        (OpenAICompatibleProvider, "grok-2",                             "https://api.x.ai/v1"),
+            "cohere":     (OpenAICompatibleProvider, "command-r-plus",                     "https://api.cohere.com/v1"),
+            "ollama":     (OpenAICompatibleProvider, "llama3.2",                           "http://localhost:11434/v1"),
+            "azure":      (OpenAICompatibleProvider, "gpt-4o",                             None),
+            "custom":     (CustomProvider,           "custom-model",                       None),
+        }
+        cfg = PROVIDER_CONFIGS.get(provider_name)
+        if not cfg:
+            logger.warning(f"No config known for provider '{provider_name}'")
+            return
+        provider_cls, default_model, default_url = cfg
+        try:
+            provider = provider_cls(
+                name=provider_name,
+                api_key=api_key,
+                model=model or default_model,
+                base_url=base_url or default_url or ""
+            )
+            await provider.initialize()
+            self.providers[provider_name] = provider
+            if not self.primary_provider:
+                self.primary_provider = provider_name
+            logger.info(f"✅ Provider '{provider_name}' loaded from guild settings")
+        except Exception as e:
+            logger.error(f"Failed to load provider '{provider_name}' from settings: {e}")
+
     async def chat(self, messages: List[Dict[str, str]], 
                    provider: Optional[str] = None,
                    system_prompt: Optional[str] = None,

@@ -70,6 +70,27 @@ class AIRouter:
         else:
             self._cache.clear()
 
+    async def _ensure_provider(self, guild_id: int, provider_name: str) -> bool:
+        """Try to load a provider from guild settings if not in AI Manager"""
+        if provider_name in self.ai.providers:
+            return True
+        if not self.db:
+            return False
+        try:
+            settings = await self.db.get_guild_settings(guild_id)
+            if not settings:
+                return False
+            api_key = settings.get("ai_api_key")
+            guild_provider = settings.get("ai_provider")
+            if not api_key or guild_provider != provider_name:
+                return False
+            await self.ai.load_provider_from_settings(provider_name, api_key,
+                settings.get("ai_model"), settings.get("ai_base_url"))
+            return provider_name in self.ai.providers
+        except Exception as e:
+            logger.warning(f"Failed to load provider {provider_name} from guild settings: {e}")
+            return False
+
     async def route(self, guild_id: int, feature: str,
                     messages: List[Dict[str, str]],
                     system_prompt: Optional[str] = None,
@@ -96,8 +117,10 @@ class AIRouter:
         last_error = None
         for cfg in providers:
             if cfg.provider not in self.ai.providers:
-                logger.debug(f"Router: provider {cfg.provider} not loaded, skipping")
-                continue
+                loaded = await self._ensure_provider(guild_id, cfg.provider)
+                if not loaded:
+                    logger.debug(f"Router: provider {cfg.provider} not loaded, skipping")
+                    continue
 
             # Check daily cap
             if cfg.max_daily > 0 and cfg.daily_used >= cfg.max_daily:
