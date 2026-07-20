@@ -45,7 +45,9 @@ class SetupCommands(commands.Cog):
     @app_commands.command(name="provider", description="🌐 Set AI Provider")
     @app_commands.describe(
         provider="Choose your AI provider",
-        model="Model name (optional)"
+        model="Model name (optional - defaults provided)",
+        api_key="API key (required for most providers)",
+        base_url="Base URL (required for custom/azure/ollama)"
     )
     @app_commands.choices(provider=[
         app_commands.Choice(name="OpenAI", value="openai"),
@@ -64,7 +66,9 @@ class SetupCommands(commands.Cog):
     @app_commands.checks.has_permissions(administrator=True)
     async def provider(self, interaction: discord.Interaction,
                       provider: app_commands.Choice[str],
-                      model: Optional[str] = None):
+                      model: Optional[str] = None,
+                      api_key: Optional[str] = None,
+                      base_url: Optional[str] = None):
         """Set AI provider"""
         await interaction.response.defer(ephemeral=True)
         
@@ -88,17 +92,24 @@ class SetupCommands(commands.Cog):
         
         selected_model = model or default_models.get(provider.value, "gpt-4o")
         
-        await self.bot.db.update_guild_settings(
-            guild_id,
-            ai_provider=provider.value,
-            ai_model=selected_model
-        )
+        updates = {
+            "ai_provider": provider.value,
+            "ai_model": selected_model
+        }
+        if api_key:
+            updates["ai_api_key"] = api_key
+        if base_url:
+            updates["ai_base_url"] = base_url
         
-        embed = RinoxEmbed.success(
-            f"**AI Provider:** `{provider.name}`\n"
-            f"**Model:** `{selected_model}`",
-            "🤖 AI Provider Updated"
-        )
+        await self.bot.db.update_guild_settings(guild_id, **updates)
+        
+        msg = f"**AI Provider:** `{provider.name}`\n**Model:** `{selected_model}`"
+        if api_key:
+            msg += f"\n**API Key:** `{'•' * min(len(api_key), 8)}{api_key[-4:] if len(api_key) > 4 else ''}`"
+        if base_url:
+            msg += f"\n**Base URL:** `{base_url}`"
+        
+        embed = RinoxEmbed.success(msg, "🤖 AI Provider Updated")
         await interaction.followup.send(embed=embed, ephemeral=True)
         
     # ========================
@@ -254,10 +265,11 @@ class SetupCommands(commands.Cog):
         
         embed.add_field(
             name="🛠️ Setup",
-            value="`/setup` - Open dashboard\n"
-                  "`/provider` - Set AI provider\n"
+            value=            "`/setup` - Open dashboard\n"
+                  "`/provider <provider> [model] [api_key] [base_url]` - Set AI provider\n"
                   "`/model` - Set AI model\n"
                   "`/apikey` - Set API key\n"
+                  "`/baseurl` - Set base URL\n"
                   "`/test` - Test AI connection",
             inline=False
         )

@@ -62,6 +62,52 @@ class DashboardView(View):
         await interaction.response.edit_message(embed=embed, view=self)
 
 
+class ProviderSelect(View):
+    """Provider selection dropdown, then opens the right modal"""
+
+    def __init__(self, bot, guild_id: int):
+        super().__init__(timeout=120)
+        self.bot = bot
+        self.guild_id = guild_id
+
+    @discord.ui.select(
+        placeholder="🌐 Select an AI provider...",
+        options=[
+            discord.SelectOption(label="OpenAI", value="openai", description="gpt-4o / gpt-4-turbo", emoji="🤖"),
+            discord.SelectOption(label="Anthropic", value="anthropic", description="claude-3-5-sonnet / haiku", emoji="🧠"),
+            discord.SelectOption(label="Google", value="google", description="gemini-1.5-pro / flash", emoji="🔮"),
+            discord.SelectOption(label="Groq", value="groq", description="llama / mixtral (fast & free)", emoji="⚡"),
+            discord.SelectOption(label="DeepSeek", value="deepseek", description="deepseek-chat / deepseek-coder", emoji="🌊"),
+            discord.SelectOption(label="Mistral", value="mistral", description="mistral-large / small", emoji="🌀"),
+            discord.SelectOption(label="Cohere", value="cohere", description="command-r-plus / command-r", emoji="📡"),
+            discord.SelectOption(label="xAI", value="xai", description="grok-2 / grok-beta", emoji="🐦"),
+            discord.SelectOption(label="Azure OpenAI", value="azure", description="Azure hosted OpenAI", emoji="☁️"),
+            discord.SelectOption(label="Ollama", value="ollama", description="Local models (no API key)", emoji="🏠"),
+            discord.SelectOption(label="LM Studio", value="lm_studio", description="Local server", emoji="💻"),
+            discord.SelectOption(label="Custom", value="custom", description="Any OpenAI-compatible API", emoji="🔗"),
+        ]
+    )
+    async def select_provider(self, interaction: discord.Interaction, select: discord.ui.Select):
+        provider = select.values[0]
+        # Providers that need a base URL
+        needs_base_url = {"custom", "azure", "ollama", "lm_studio"}
+        # Ollama doesn't need an API key
+        no_api_key = {"ollama"}
+
+        if provider in needs_base_url:
+            modal = ProviderWithEndpointModal(self.bot, self.guild_id, provider, no_api_key=provider in no_api_key)
+        else:
+            modal = StandardProviderModal(self.bot, self.guild_id, provider)
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="🔙 Back", style=discord.ButtonStyle.gray, row=1)
+    async def back(self, interaction: discord.Interaction, button: Button):
+        settings = await self.bot.db.get_guild_settings(self.guild_id)
+        embed = RinoxEmbed.dashboard(interaction.guild.name, settings or {})
+        view = DashboardView(self.bot, self.guild_id)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
 class AISettingsView(View):
     """AI configuration view"""
     
@@ -72,8 +118,16 @@ class AISettingsView(View):
         
     @discord.ui.button(label="🌐 Provider", style=discord.ButtonStyle.primary)
     async def provider(self, interaction: discord.Interaction, button: Button):
-        modal = ProviderModal(self.bot, self.guild_id)
-        await interaction.response.send_modal(modal)
+        view = ProviderSelect(self.bot, self.guild_id)
+        embed = RinoxEmbed.info(
+            "Select a provider below.\n\n"
+            "After selecting you'll be prompted for:\n"
+            "• **API Key** – most providers require one\n"
+            "• **Model** – pre-filled with a sensible default\n"
+            "• **Endpoint URL** – only for custom / azure / ollama",
+            "🌐 Choose AI Provider"
+        )
+        await interaction.response.edit_message(embed=embed, view=view)
         
     @discord.ui.button(label="🧠 Model", style=discord.ButtonStyle.primary)
     async def model(self, interaction: discord.Interaction, button: Button):
@@ -315,29 +369,124 @@ class AnalyticsView(View):
 # MODALS
 # ========================
 
-class ProviderModal(Modal):
-    """Modal for selecting AI provider"""
-    
-    provider = TextInput(
-        label="AI Provider Name",
-        placeholder="e.g., openai, anthropic, groq, google, deepseek",
+class StandardProviderModal(Modal):
+    """Modal for standard providers (model + api key)"""
+
+    model = TextInput(
+        label="Model",
+        placeholder="e.g., gpt-4o, llama-3.3-70b-versatile",
         required=True,
-        max_length=50
+        max_length=100
     )
-    
-    def __init__(self, bot, guild_id: int):
-        super().__init__(title="🤖 Select AI Provider")
+    api_key = TextInput(
+        label="API Key",
+        placeholder="sk-...",
+        required=True,
+        style=discord.TextStyle.paragraph
+    )
+
+    def __init__(self, bot, guild_id: int, provider: str):
+        self.provider = provider
+        default_models = {
+            "openai": "gpt-4o",
+            "anthropic": "claude-3-5-sonnet-20241022",
+            "google": "gemini-1.5-pro",
+            "groq": "llama-3.3-70b-versatile",
+            "deepseek": "deepseek-chat",
+            "mistral": "mistral-large-latest",
+            "cohere": "command-r-plus",
+            "xai": "grok-2",
+            "lm_studio": "local-model",
+        }
+        self.model.default = default_models.get(provider, "gpt-4o")
+
+        super().__init__(title=f"🤖 {provider.title()} Setup")
         self.bot = bot
         self.guild_id = guild_id
-        
+
     async def on_submit(self, interaction: discord.Interaction):
         await self.bot.db.update_guild_settings(
-            self.guild_id, ai_provider=self.provider.value.lower()
+            self.guild_id,
+            ai_provider=self.provider,
+            ai_model=self.model.value,
+            ai_api_key=self.api_key.value
         )
+        masked = f"{'•' * min(len(self.api_key.value), 8)}{self.api_key.value[-4:]}"
         embed = RinoxEmbed.success(
-            f"AI Provider set to: `{self.provider.value}`",
-            "Provider Updated"
+            f"**Provider:** `{self.provider.title()}`\n"
+            f"**Model:** `{self.model.value}`\n"
+            f"**API Key:** `{masked}`",
+            "🤖 Provider Configured"
         )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+class ProviderWithEndpointModal(Modal):
+    """Modal for providers needing base URL (custom, azure, ollama, lm_studio)"""
+
+    model = TextInput(
+        label="Model",
+        placeholder="e.g., gpt-4o, custom-model",
+        required=True,
+        max_length=100
+    )
+    base_url = TextInput(
+        label="Endpoint / Base URL",
+        placeholder="https://api.openai.com/v1",
+        required=True,
+        max_length=300
+    )
+
+    def __init__(self, bot, guild_id: int, provider: str, no_api_key: bool = False):
+        self.provider = provider
+        self.no_api_key = no_api_key
+        default_models = {
+            "azure": "gpt-4o",
+            "ollama": "llama3.2",
+            "lm_studio": "local-model",
+            "custom": "custom-model",
+        }
+        default_urls = {
+            "azure": "https://your-resource.openai.azure.com",
+            "ollama": "http://localhost:11434",
+            "lm_studio": "http://localhost:1234/v1",
+            "custom": "https://your-api-endpoint.com/v1",
+        }
+        self.model.default = default_models.get(provider, "custom-model")
+        self.base_url.default = default_urls.get(provider, "https://")
+
+        super().__init__(title=f"🔗 {provider.title()} Setup")
+        self.bot = bot
+        self.guild_id = guild_id
+
+        # Add API key field dynamically if needed
+        if not no_api_key:
+            self.add_item(TextInput(
+                label="API Key",
+                placeholder="sk-...",
+                required=True,
+                style=discord.TextStyle.paragraph
+            ))
+            # Store reference
+            self.api_key_field = self.children[-1]
+
+    async def on_submit(self, interaction: discord.Interaction):
+        updates = {
+            "ai_provider": self.provider,
+            "ai_model": self.model.value,
+            "ai_base_url": self.base_url.value,
+        }
+        msg = (f"**Provider:** `{self.provider.title()}`\n"
+               f"**Model:** `{self.model.value}`\n"
+               f"**Endpoint:** `{self.base_url.value}`")
+
+        if not self.no_api_key:
+            updates["ai_api_key"] = self.api_key_field.value
+            masked = f"{'•' * min(len(self.api_key_field.value), 8)}{self.api_key_field.value[-4:]}"
+            msg += f"\n**API Key:** `{masked}`"
+
+        await self.bot.db.update_guild_settings(self.guild_id, **updates)
+        embed = RinoxEmbed.success(msg, "🔗 Provider Configured")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
