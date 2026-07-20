@@ -207,9 +207,10 @@ class SetupCommands(commands.Cog):
         embed.add_field(
             name="🛠️ Setup",
             value=            "`/setup` - Open dashboard (recommended)\n"
-                  "`/provider <provider> [model] [api_key] [base_url]` - Set AI provider (all-in-one)\n"
-                  "`/ai channel-set #channel <feature> [provider] [model]` - Set per-channel AI\n"
-                  "`/ai route-set <feature> <provider>` - Set per-feature provider\n"
+                  "`/provider <provider> [model] [api_key] [base_url]` - Set default AI provider\n"
+                  "`/ai channel-set #channel <feature> [provider] [model] [custom_instructions]` - Per-channel AI\n"
+                  "`/ai route-set <feature> <provider>` - Per-feature provider override\n"
+                  "`/ai channel-list` - List all AI channel modes\n"
                   "`/test` - Test AI connection",
             inline=False
         )

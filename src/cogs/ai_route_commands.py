@@ -38,10 +38,12 @@ class AIRouteCommands(commands.Cog):
     ]
 
     CHANNEL_FEATURES = [
-        app_commands.Choice(name="Auto Chat (AI replies to every message)", value="chat"),
-        app_commands.Choice(name="Auto Translate (translates to English)", value="translate"),
-        app_commands.Choice(name="Auto Summarize (summarizes conversation)", value="summarize"),
-        app_commands.Choice(name="Auto Image Generate (text to image)", value="image_gen"),
+        app_commands.Choice(name="💬 Chat — AI replies to every message", value="chat"),
+        app_commands.Choice(name="🌍 Translate — auto-translate messages", value="translate"),
+        app_commands.Choice(name="📝 Summarize — auto-summarize conversations", value="summarize"),
+        app_commands.Choice(name="🖼️ Vision — AI analyzes images", value="vision"),
+        app_commands.Choice(name="🎨 Image Gen — text-to-image generation", value="image_gen"),
+        app_commands.Choice(name="🛡️ Moderation — AI content moderation", value="moderation"),
     ]
 
     def __init__(self, bot):
@@ -212,45 +214,51 @@ class AIRouteCommands(commands.Cog):
     @app_commands.describe(
         channel="Channel to configure",
         feature="AI feature to activate in this channel",
-        provider="AI provider to use for this channel (optional)",
-        model="Model name (optional, uses provider default)",
-        target_lang="Target language for translate (e.g., english, bengali, spanish)"
+        provider="AI provider (defaults to /provider setting if omitted)",
+        model="Model name (defaults to provider default if omitted)",
+        custom_instructions="Custom system prompt for this channel's AI",
+        target_lang="Target language for translate (e.g., english, bengali)"
     )
-    @app_commands.choices(provider=[
-        app_commands.Choice(name="OpenAI", value="openai"),
-        app_commands.Choice(name="Anthropic", value="anthropic"),
-        app_commands.Choice(name="Google Gemini", value="google"),
-        app_commands.Choice(name="Groq", value="groq"),
-        app_commands.Choice(name="DeepSeek", value="deepseek"),
-        app_commands.Choice(name="Mistral", value="mistral"),
-        app_commands.Choice(name="xAI (Grok)", value="xai"),
-        app_commands.Choice(name="Cohere", value="cohere"),
-        app_commands.Choice(name="Ollama", value="ollama"),
-        app_commands.Choice(name="Azure OpenAI", value="azure"),
-        app_commands.Choice(name="Custom", value="custom"),
-    ])
+    @app_commands.choices(feature=CHANNEL_FEATURES)
+    @app_commands.choices(provider=PROVIDERS)
     @app_commands.checks.has_permissions(administrator=True)
     async def channel_set(self, interaction: discord.Interaction,
                           channel: discord.TextChannel,
                           feature: app_commands.Choice[str],
                           provider: Optional[app_commands.Choice[str]] = None,
                           model: Optional[str] = None,
+                          custom_instructions: Optional[str] = None,
                           target_lang: Optional[str] = None):
         await interaction.response.defer(ephemeral=True)
+
+        # Fetch guild default settings
+        settings = await self.bot.db.get_guild_settings(interaction.guild_id)
+        default_provider = (settings or {}).get("ai_provider", "openai")
+        default_model = (settings or {}).get("ai_model", "gpt-4o")
+
+        # Determine which provider/model to use
+        use_provider = provider.value if provider else default_provider
+        use_model = model or default_model
 
         config = {}
         if feature.value == "translate" and target_lang:
             config["target_lang"] = target_lang
+        if custom_instructions:
+            config["custom_instructions"] = custom_instructions
 
-        # If provider is specified, auto-configure the route too
+        # Store chosen provider + model in config for per-channel override
+        config["provider"] = use_provider
+        config["model"] = use_model
+
+        # Auto-configure route only if provider was explicitly given
         if provider:
             await self.bot.db.set_feature_provider(
                 interaction.guild_id,
                 feature.value,
-                provider.value,
-                model,
-                0,  # primary priority
-                0   # unlimited daily
+                use_provider,
+                use_model,
+                0,
+                0
             )
             self.bot.ai.router.invalidate_cache(interaction.guild_id, feature.value)
 
@@ -258,12 +266,18 @@ class AIRouteCommands(commands.Cog):
             interaction.guild_id, channel.id, feature.value, config
         )
 
-        msg = f"**Channel:** {channel.mention}\n**Mode:** `{feature.name}`"
-        if provider:
-            msg += f"\n**Provider:** `{provider.name}`"
-            msg += f"\n**Model:** `{model or 'default'}`"
+        msg = (
+            f"**Channel:** {channel.mention}\n"
+            f"**Mode:** `{feature.name}`\n"
+            f"**Provider:** `{use_provider}`\n"
+            f"**Model:** `{use_model}`"
+        )
+        if custom_instructions:
+            msg += f"\n**Custom Instructions:** `{custom_instructions[:50]}{'...' if len(custom_instructions) > 50 else ''}`"
         if target_lang:
             msg += f"\n**Target Language:** `{target_lang}`"
+        if not provider:
+            msg += "\n\n📌 *Using guild default provider. Set a custom one with `/provider`.*"
 
         embed = RinoxEmbed.success(msg, "Channel AI Mode Active")
         await interaction.followup.send(embed=embed, ephemeral=True)
@@ -303,11 +317,20 @@ class AIRouteCommands(commands.Cog):
         for m in modes:
             channel = interaction.guild.get_channel(m["channel_id"])
             ch_name = channel.mention if channel else f"`{m['channel_id']}`"
-            config = m.get("config", {})
-            extra = f" -> {config.get('target_lang', '')}" if config else ""
+            cfg = m.get("config", {}) or {}
+            parts = [f"**Mode:** `{m['feature']}`"]
+            if cfg.get("provider"):
+                parts.append(f"**Provider:** `{cfg['provider']}`")
+            if cfg.get("model"):
+                parts.append(f"**Model:** `{cfg['model']}`")
+            if cfg.get("target_lang"):
+                parts.append(f"**Lang:** `{cfg['target_lang']}`")
+            if cfg.get("custom_instructions"):
+                ci = cfg["custom_instructions"]
+                parts.append(f"**Prompt:** `{ci[:40]}{'...' if len(ci) > 40 else ''}`")
             embed.add_field(
                 name=f"{ch_name}",
-                value=f"Mode: `{m['feature']}`{extra}",
+                value=" | ".join(parts),
                 inline=False
             )
 

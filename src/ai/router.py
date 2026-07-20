@@ -148,21 +148,31 @@ class AIRouter:
     async def route_moderation(self, guild_id: int, content: str, **kwargs) -> AIResponse:
         """Shortcut: route to 'moderation' feature"""
         messages = [{"role": "user", "content": content}]
+        system_prompt = kwargs.pop("system_prompt", None)
+        base_prompt = "You analyze content for toxicity and threats."
+        if system_prompt:
+            base_prompt = f"{system_prompt}\n\n{base_prompt}"
         return await self.route(guild_id, "moderation", messages,
-                                 system_prompt="You analyze content for toxicity and threats.", **kwargs)
+                                 system_prompt=base_prompt, **kwargs)
 
     async def route_translate(self, guild_id: int, text: str,
-                               target_lang: str = "english", **kwargs) -> AIResponse:
+                                target_lang: str = "english", **kwargs) -> AIResponse:
         """Shortcut: route to 'translate' feature"""
         messages = [{"role": "user", "content": text}]
-        prompt = f"Translate the following text to {target_lang}. Respond only with the translation."
-        return await self.route(guild_id, "translate", messages, system_prompt=prompt, **kwargs)
+        system_prompt = kwargs.pop("system_prompt", None)
+        base_prompt = f"Translate the following text to {target_lang}. Respond only with the translation."
+        if system_prompt:
+            base_prompt = f"{system_prompt}\n\n{base_prompt}"
+        return await self.route(guild_id, "translate", messages, system_prompt=base_prompt, **kwargs)
 
     async def route_summarize(self, guild_id: int, text: str, **kwargs) -> AIResponse:
         """Shortcut: route to 'summarize' feature"""
         messages = [{"role": "user", "content": text}]
-        prompt = "Summarize the following conversation concisely. Focus on key points."
-        return await self.route(guild_id, "summarize", messages, system_prompt=prompt, **kwargs)
+        system_prompt = kwargs.pop("system_prompt", None)
+        base_prompt = "Summarize the following conversation concisely. Focus on key points."
+        if system_prompt:
+            base_prompt = f"{system_prompt}\n\n{base_prompt}"
+        return await self.route(guild_id, "summarize", messages, system_prompt=base_prompt, **kwargs)
 
     async def route_vision(self, guild_id: int, image_url: str, prompt: str, **kwargs) -> AIResponse:
         """Shortcut: route to 'vision' feature"""

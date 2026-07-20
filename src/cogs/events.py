@@ -60,43 +60,65 @@ class Events(commands.Cog):
         feature = mode.get("feature")
         config = mode.get("config", {}) or {}
         content = message.content
-        if not content:
-            return
+        custom_instructions = config.get("custom_instructions")
 
         async with message.channel.typing():
             try:
                 if feature == "chat":
+                    if not content:
+                        return
                     response = await self.bot.ai.router.route_chat(
                         message.guild.id,
                         messages=[{"role": "user", "content": content}],
+                        system_prompt=custom_instructions,
                     )
                     if response.success:
                         await message.reply(response.content[:2000])
 
                 elif feature == "translate":
+                    if not content:
+                        return
                     target = config.get("target_lang", "english")
                     response = await self.bot.ai.router.route_translate(
-                        message.guild.id, content, target_lang=target
+                        message.guild.id, content, target_lang=target,
+                        system_prompt=custom_instructions,
                     )
                     if response.success:
                         await message.reply(response.content[:2000])
 
                 elif feature == "summarize":
-                    # Collect recent messages in channel
+                    if not content:
+                        return
                     recent = []
                     async for msg in message.channel.history(limit=20, before=message):
                         if not msg.author.bot:
                             recent.append(f"{msg.author.name}: {msg.content}")
                     recent_text = "\n".join(reversed(recent)) + f"\n\n[New] {message.author.name}: {content}"
                     response = await self.bot.ai.router.route_summarize(
-                        message.guild.id, recent_text
+                        message.guild.id, recent_text,
+                        system_prompt=custom_instructions,
                     )
                     if response.success:
                         await message.reply(f"📝 **Summary:**\n{response.content[:2000]}")
 
+                elif feature == "vision":
+                    if not message.attachments:
+                        await message.reply("🖼️ Please attach an image for vision analysis.")
+                        return
+                    img_url = message.attachments[0].url
+                    prompt = custom_instructions or "Describe this image in detail."
+                    response = await self.bot.ai.router.route_vision(
+                        message.guild.id, img_url, prompt
+                    )
+                    if response.success:
+                        await message.reply(response.content[:2000])
+
                 elif feature == "image_gen":
+                    if not content:
+                        return
                     response = await self.bot.ai.router.route_image_gen(
-                        message.guild.id, content
+                        message.guild.id, content,
+                        system_prompt=custom_instructions,
                     )
                     if response.success and response.content:
                         embed = discord.Embed(
@@ -106,6 +128,19 @@ class Events(commands.Cog):
                         )
                         embed.set_image(url=response.content)
                         await message.reply(embed=embed)
+
+                elif feature == "moderation":
+                    if not content:
+                        return
+                    response = await self.bot.ai.router.route_moderation(
+                        message.guild.id, content,
+                        system_prompt=custom_instructions,
+                    )
+                    if response.success:
+                        if response.content and "❌" not in response.content:
+                            await message.reply(f"✅ Content looks safe.")
+                        else:
+                            await message.reply(response.content[:2000])
 
             except Exception as e:
                 self.bot.logger.error(f"Channel AI mode error: {e}")
