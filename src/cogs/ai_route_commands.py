@@ -212,12 +212,29 @@ class AIRouteCommands(commands.Cog):
     @app_commands.describe(
         channel="Channel to configure",
         feature="AI feature to activate in this channel",
+        provider="AI provider to use for this channel (optional)",
+        model="Model name (optional, uses provider default)",
         target_lang="Target language for translate (e.g., english, bengali, spanish)"
     )
+    @app_commands.choices(provider=[
+        app_commands.Choice(name="OpenAI", value="openai"),
+        app_commands.Choice(name="Anthropic", value="anthropic"),
+        app_commands.Choice(name="Google Gemini", value="google"),
+        app_commands.Choice(name="Groq", value="groq"),
+        app_commands.Choice(name="DeepSeek", value="deepseek"),
+        app_commands.Choice(name="Mistral", value="mistral"),
+        app_commands.Choice(name="xAI (Grok)", value="xai"),
+        app_commands.Choice(name="Cohere", value="cohere"),
+        app_commands.Choice(name="Ollama", value="ollama"),
+        app_commands.Choice(name="Azure OpenAI", value="azure"),
+        app_commands.Choice(name="Custom", value="custom"),
+    ])
     @app_commands.checks.has_permissions(administrator=True)
     async def channel_set(self, interaction: discord.Interaction,
                           channel: discord.TextChannel,
                           feature: app_commands.Choice[str],
+                          provider: Optional[app_commands.Choice[str]] = None,
+                          model: Optional[str] = None,
                           target_lang: Optional[str] = None):
         await interaction.response.defer(ephemeral=True)
 
@@ -225,16 +242,30 @@ class AIRouteCommands(commands.Cog):
         if feature.value == "translate" and target_lang:
             config["target_lang"] = target_lang
 
+        # If provider is specified, auto-configure the route too
+        if provider:
+            await self.bot.db.set_feature_provider(
+                interaction.guild_id,
+                feature.value,
+                provider.value,
+                model,
+                0,  # primary priority
+                0   # unlimited daily
+            )
+            self.bot.ai.router.invalidate_cache(interaction.guild_id, feature.value)
+
         await self.bot.db.set_channel_ai_mode(
             interaction.guild_id, channel.id, feature.value, config
         )
 
-        embed = RinoxEmbed.success(
-            f"**Channel:** {channel.mention}\n"
-            f"**Mode:** `{feature.name}`\n"
-            f"{f'**Target Language:** {target_lang}' if target_lang else ''}",
-            "Channel AI Mode Active"
-        )
+        msg = f"**Channel:** {channel.mention}\n**Mode:** `{feature.name}`"
+        if provider:
+            msg += f"\n**Provider:** `{provider.name}`"
+            msg += f"\n**Model:** `{model or 'default'}`"
+        if target_lang:
+            msg += f"\n**Target Language:** `{target_lang}`"
+
+        embed = RinoxEmbed.success(msg, "Channel AI Mode Active")
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     @ai_group.command(name="channel-remove", description="Remove AI mode from a channel")
